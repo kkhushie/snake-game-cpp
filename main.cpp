@@ -12,7 +12,7 @@ int main() {
     // Generate random food position inside the box
     int foodX = rand() % width;
     int foodY = rand() % height;
-
+int score = 0; 
     // Draw top border
     for (int i = 0; i < width + 2; i++) cout << "#";
     cout << endl;
@@ -21,8 +21,10 @@ int main() {
     for (int i = 0; i < height; i++) {
         cout << "#"; // left wall
         for (int j = 0; j < width; j++) {
-            if (i == foodY && j == foodX)
-                cout << "@";  // Food symbol
+                if (i == foodY && j == foodX) {
+                cout << "@";
+                score += 10; 
+            }
             else
                 cout << " ";
         }
@@ -35,6 +37,6 @@ int main() {
     cout << endl;
 
     cout << "\nFood spawned at (" << foodX << ", " << foodY << ") 🍎" << endl;
-
+cout << "Current Score: " << score << " points!" << endl;  
     return 0;
 }
