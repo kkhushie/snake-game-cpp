@@ -4,6 +4,7 @@
 #include <conio.h>   // for _kbhit() and _getch()
 #include <windows.h> // for Sleep()
 #include <vector>    // for snake tail
+#include <algorithm> // for max()
 using namespace std;
 
 const int width = 20;
@@ -15,6 +16,10 @@ int main() {
     int foodX = rand() % width;
     int foodY = rand() % height;
     int score = 0;
+
+    // --- High Score Variable ---
+    int highScore = 0; // Tracks the highest score in the current session
+    // ----------------------------------------
 
     int headX = width / 2;
     int headY = height / 2;
@@ -67,7 +72,8 @@ int main() {
         for (int i = 0; i < width + 2; i++) cout << "#";
         cout << endl;
 
-        cout << "\nScore: " << score << " | Length: " << tailLength + 1 << endl;
+        // --- Display High Score ---
+        cout << "\nScore: " << score << " | Length: " << tailLength + 1 << " | High Score: " << highScore << endl;
         cout << "Controls: WASD to move, Q to quit" << endl;
 
         // Input handling
@@ -146,7 +152,14 @@ int main() {
         system("cls");
     }
 
-    cout << "Game Over! Final Score: " << score << " | Final Length: " << tailLength + 1 << endl;
+    // --- NEW FEATURE: Update High Score on Game Over ---
+    if (score > highScore) {
+        highScore = score;
+    }
+    
+    // --- MODIFIED: Final Score Message ---
+    cout << "Game Over! Final Score: " << score << " | High Score: " << highScore << " | Final Length: " << tailLength + 1 << endl;
+    
     cout << "Thanks for playing!" << endl;
     
     return 0;
