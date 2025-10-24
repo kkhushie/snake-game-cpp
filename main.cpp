@@ -5,6 +5,7 @@
 #include <windows.h> // for Sleep()
 #include <vector>    // for snake tail
 #include <algorithm> // for max()
+#include <fstream> //  for file handling ( saving high score )
 using namespace std;
 
 const int width = 20;
@@ -19,6 +20,13 @@ int main() {
 
     // --- High Score Variable ---
     int highScore = 0; // Tracks the highest score in the current session
+
+     // Load high score from file if exists
+    ifstream inFile("highscore.txt");
+    if (inFile.is_open()) {
+        inFile >> highScore;
+        inFile.close();
+    }
     // ----------------------------------------
 
     int headX = width / 2;
@@ -152,10 +160,16 @@ int main() {
         system("cls");
     }
 
-    // --- NEW FEATURE: Update High Score on Game Over ---
+    //  Save updated high score to file
     if (score > highScore) {
         highScore = score;
+        ofstream outFile("highscore.txt");
+        if (outFile.is_open()) {
+            outFile << highScore;
+            outFile.close();
+        }
     }
+   
     
     // --- MODIFIED: Final Score Message ---
     cout << "Game Over! Final Score: " << score << " | High Score: " << highScore << " | Final Length: " << tailLength + 1 << endl;
