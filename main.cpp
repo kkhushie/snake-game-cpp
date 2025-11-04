@@ -2,6 +2,7 @@
 #include <iostream>
 #include <windows.h>
 #include <chrono>
+#include <cstdio>
 using namespace std;
 
 // height and width of the boundary
@@ -21,6 +22,8 @@ int snakeTailX[100], snakeTailY[100];
 // variable to store the length of the snake's tail
 int snakeTailLen;
 
+int highScore = 0; //  High Score Variable
+
 // for storing snake's moving direction
 enum snakesDirection { STOP = 0, LEFT, RIGHT, UP, DOWN };
 snakesDirection sDir;
@@ -32,6 +35,24 @@ bool isGameOver;
 bool bombActive = false;
 auto lastBombTime = chrono::steady_clock::now();
 const int BOMB_INTERVAL = 10; // seconds
+
+// Load High Score from file
+void LoadHighScore() {
+    FILE* file = fopen("highscore.txt", "r");
+    if (file) {
+        fscanf(file, "%d", &highScore);
+        fclose(file);
+    }
+}
+
+//  Save High Score to file
+void SaveHighScore() {
+    FILE* file = fopen("highscore.txt", "w");
+    if (file) {
+        fprintf(file, "%d", highScore);
+        fclose(file);
+    }
+}
 
 // Hide blinking cursor
 void HideCursor() {
@@ -54,16 +75,16 @@ void GameInit() {
     snakeTailLen = 0;
     bombActive = false;
     lastBombTime = chrono::steady_clock::now();
+
+    LoadHighScore(); // Load high score
 }
 
 // Function for creating the game board & rendering
 void GameRender(string playerName) {
-    // Move cursor to 0,0 instead of clearing screen ❗
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     COORD pos = {0, 0};
     SetConsoleCursorPosition(hOut, pos);
 
-    // Creating top walls with '-'
     for (int i = 0; i < width + 2; i++)
         cout << "-";
     cout << endl;
@@ -71,21 +92,19 @@ void GameRender(string playerName) {
     for (int i = 0; i < height; i++) {
         for (int j = 0; j <= width; j++) {
             if (j == 0 || j == width)
-                cout << "|";  // side walls
+                cout << "|";
 
             if (i == y && j == x)
-                // cout << "O"; // snake head
-                cout << "\U0001F636"; // 😶 emoji snake head
-
+                cout << "\U0001F636";
             else if (i == fruitCordY && j == fruitCordX)
-                cout << "\U0001F34E"; // food
+                cout << "\U0001F34E";
             else if (bombActive && i == bombCordY && j == bombCordX)
-                cout << "\U0001F4A3"; // 💣 bomb emoji
+                cout << "\U0001F4A3";
             else {
                 bool printTail = false;
                 for (int k = 0; k < snakeTailLen; k++) {
                     if (snakeTailX[k] == j && snakeTailY[k] == i) {
-                        cout << "\U0001F7E1"; // 🟡 emoji snake tail
+                        cout << "\U0001F7E1";
                         printTail = true;
                     }
                 }
@@ -96,15 +115,13 @@ void GameRender(string playerName) {
         cout << endl;
     }
 
-    // Creating bottom walls with '-'
     for (int i = 0; i < width + 2; i++)
         cout << "-";
     cout << endl;
 
-    // Display player's score
     cout << playerName << "'s Score: " << playerScore << endl;
-    
-    // Display bomb status
+    cout << "High Score: " << highScore << endl; //  Display High Score
+
     if (bombActive) {
         auto now = chrono::steady_clock::now();
         auto elapsed = chrono::duration_cast<chrono::seconds>(now - lastBombTime).count();
@@ -118,14 +135,12 @@ void UpdateBomb() {
     auto elapsed = chrono::duration_cast<chrono::seconds>(now - lastBombTime).count();
     
     if (!bombActive && elapsed >= BOMB_INTERVAL) {
-        // Spawn new bomb at random position
         bombCordX = rand() % width;
         bombCordY = rand() % height;
         bombActive = true;
         lastBombTime = now;
     }
     else if (bombActive && elapsed >= BOMB_INTERVAL) {
-        // Remove bomb after 20 seconds
         bombActive = false;
         lastBombTime = now;
     }
@@ -155,17 +170,14 @@ void UpdateGame() {
     case DOWN:  y++; break;
     }
 
-    // Wall collision
     if (x >= width || x < 0 || y >= height || y < 0)
         isGameOver = true;
 
-    // Tail collision
     for (int i = 0; i < snakeTailLen; i++) {
         if (snakeTailX[i] == x && snakeTailY[i] == y)
             isGameOver = true;
     }
 
-    // Food collision
     if (x == fruitCordX && y == fruitCordY) {
         playerScore += 10;
         fruitCordX = rand() % width;
@@ -173,14 +185,13 @@ void UpdateGame() {
         snakeTailLen++;
     }
     
-    // Bomb collision
     if (bombActive && x == bombCordX && y == bombCordY) {
         isGameOver = true;
         cout << "\nBOOM! You hit the bomb!" << endl;
     }
 }
 
-// Function to set the game difficulty level
+// Set difficulty
 int SetDifficulty() {
     int dfc, choice;
     cout << "\nSET DIFFICULTY\n1: Easy\n2: Medium\n3: Hard"
@@ -188,15 +199,15 @@ int SetDifficulty() {
     cin >> choice;
 
     switch (choice) {
-    case 1: dfc = 150; break; // slower = easy
+    case 1: dfc = 150; break;
     case 2: dfc = 100; break;
-    case 3: dfc = 50;  break; // faster = hard
+    case 3: dfc = 50;  break;
     default: dfc = 100;
     }
     return dfc;
 }
 
-// Function to handle user input
+// User input
 void UserInput() {
     if (_kbhit()) {
         switch (_getch()) {
@@ -209,7 +220,6 @@ void UserInput() {
     }
 }
 
-// Main function / game loop
 int main() {
     HideCursor();
     SetConsoleOutputCP(CP_UTF8);
@@ -224,9 +234,16 @@ int main() {
     while (!isGameOver) {
         GameRender(playerName);
         UserInput();
-        UpdateBomb(); // Update bomb status
+        UpdateBomb();
         UpdateGame();
         Sleep(dfc);
+    }
+
+    //  Update and save high score
+    if (playerScore > highScore) {
+        highScore = playerScore;
+        SaveHighScore();
+        cout << "\n🎉 NEW HIGH SCORE! 🎉\n";
     }
 
     cout << "\nGAME OVER! Final Score: " << playerScore << endl;
