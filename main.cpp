@@ -67,7 +67,7 @@ void GameRender(string playerName) {
             if (i == y && j == x)
                 cout << "O"; // snake head
             else if (i == fruitCordY && j == fruitCordX)
-                cout << "#"; // food
+                cout << "\U0001F34E"; // food
             else {
                 bool printTail = false;
                 for (int k = 0; k < snakeTailLen; k++) {
@@ -167,6 +167,7 @@ void UserInput() {
 // Main function / game loop
 int main() {
     HideCursor();
+    SetConsoleOutputCP(CP_UTF8);
 
     string playerName;
     cout << "Enter your name: ";
