@@ -65,14 +65,16 @@ void GameRender(string playerName) {
                 cout << "|";  // side walls
 
             if (i == y && j == x)
-                cout << "O"; // snake head
+                // cout << "O"; // snake head
+                cout << "\U0001F636"; // 😶 emoji snake head
+
             else if (i == fruitCordY && j == fruitCordX)
                 cout << "\U0001F34E"; // food
             else {
                 bool printTail = false;
                 for (int k = 0; k < snakeTailLen; k++) {
                     if (snakeTailX[k] == j && snakeTailY[k] == i) {
-                        cout << "o";
+                        cout << "\U0001F7E1"; // 🟡 emoji snake tail
                         printTail = true;
                     }
                 }
