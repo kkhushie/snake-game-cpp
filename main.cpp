@@ -1,7 +1,7 @@
-// required header file
 #include <conio.h>
 #include <iostream>
 #include <windows.h>
+#include <chrono>
 using namespace std;
 
 // height and width of the boundary
@@ -12,6 +12,8 @@ const int height = 20;
 int x, y;
 // Food coordinates
 int fruitCordX, fruitCordY;
+// Bomb coordinates
+int bombCordX, bombCordY;
 // variable to store the score of the player
 int playerScore;
 // Arrays to store the coordinates of snake tail (x-axis, y-axis)
@@ -25,6 +27,11 @@ snakesDirection sDir;
 
 // boolean variable for checking game is over or not
 bool isGameOver;
+
+// Variables for bomb timing
+bool bombActive = false;
+auto lastBombTime = chrono::steady_clock::now();
+const int BOMB_INTERVAL = 10; // seconds
 
 // Hide blinking cursor
 void HideCursor() {
@@ -45,6 +52,8 @@ void GameInit() {
     fruitCordY = rand() % height;
     playerScore = 0;
     snakeTailLen = 0;
+    bombActive = false;
+    lastBombTime = chrono::steady_clock::now();
 }
 
 // Function for creating the game board & rendering
@@ -70,6 +79,8 @@ void GameRender(string playerName) {
 
             else if (i == fruitCordY && j == fruitCordX)
                 cout << "\U0001F34E"; // food
+            else if (bombActive && i == bombCordY && j == bombCordX)
+                cout << "\U0001F4A3"; // 💣 bomb emoji
             else {
                 bool printTail = false;
                 for (int k = 0; k < snakeTailLen; k++) {
@@ -92,6 +103,32 @@ void GameRender(string playerName) {
 
     // Display player's score
     cout << playerName << "'s Score: " << playerScore << endl;
+    
+    // Display bomb status
+    if (bombActive) {
+        auto now = chrono::steady_clock::now();
+        auto elapsed = chrono::duration_cast<chrono::seconds>(now - lastBombTime).count();
+        cout << "Bomb Active! Time left: " << (BOMB_INTERVAL - elapsed) << "s" << endl;
+    }
+}
+
+// Function to handle bomb spawning
+void UpdateBomb() {
+    auto now = chrono::steady_clock::now();
+    auto elapsed = chrono::duration_cast<chrono::seconds>(now - lastBombTime).count();
+    
+    if (!bombActive && elapsed >= BOMB_INTERVAL) {
+        // Spawn new bomb at random position
+        bombCordX = rand() % width;
+        bombCordY = rand() % height;
+        bombActive = true;
+        lastBombTime = now;
+    }
+    else if (bombActive && elapsed >= BOMB_INTERVAL) {
+        // Remove bomb after 20 seconds
+        bombActive = false;
+        lastBombTime = now;
+    }
 }
 
 // Function for updating the game state
@@ -134,6 +171,12 @@ void UpdateGame() {
         fruitCordX = rand() % width;
         fruitCordY = rand() % height;
         snakeTailLen++;
+    }
+    
+    // Bomb collision
+    if (bombActive && x == bombCordX && y == bombCordY) {
+        isGameOver = true;
+        cout << "\nBOOM! You hit the bomb!" << endl;
     }
 }
 
@@ -181,6 +224,7 @@ int main() {
     while (!isGameOver) {
         GameRender(playerName);
         UserInput();
+        UpdateBomb(); // Update bomb status
         UpdateGame();
         Sleep(dfc);
     }
