@@ -4,6 +4,8 @@
 #include <cstdlib>
 #include <string>
 #include <atomic>
+#include <vector>
+#include <sstream>
 
 // ===================================================
 // Platform specifics
@@ -13,40 +15,49 @@
   #include <windows.h>
 
   static HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+  static DWORD dwOriginalOutMode = 0;
+
+  void initTerminal() {
+      GetConsoleMode(hOut, &dwOriginalOutMode);
+      DWORD dwOutMode = dwOriginalOutMode | ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+      SetConsoleMode(hOut, dwOutMode);
+      SetConsoleOutputCP(CP_UTF8);
+  }
+  void restoreTerminal() {
+      SetConsoleMode(hOut, dwOriginalOutMode);
+  }
 
   void setCursorPos(int X, int Y) {
-      COORD pos = {(SHORT)X, (SHORT)Y};
-      SetConsoleCursorPosition(hOut, pos);
+      std::cout << "\033[" << (Y + 1) << ";" << (X + 1) << "H";
   }
-  void HideCursor() {
-      CONSOLE_CURSOR_INFO info;
-      GetConsoleCursorInfo(hOut, &info);
-      info.bVisible = FALSE;
-      SetConsoleCursorInfo(hOut, &info);
-  }
-  void ShowCursor() {
-      CONSOLE_CURSOR_INFO info;
-      GetConsoleCursorInfo(hOut, &info);
-      info.bVisible = TRUE;
-      SetConsoleCursorInfo(hOut, &info);
-  }
+  void HideCursor() { std::cout << "\033[?25l"; }
+  void ShowCursor() { std::cout << "\033[?25h"; }
   bool kbhitCheck() { return _kbhit(); }
   char getChar() { return _getch(); }
-  void clearScreen() { system("cls"); }
+  void clearScreen() { std::cout << "\033[2J\033[H"; }
+
+  void initInput() { }
+  void resetInput() { }
 
 #else
   #include <termios.h>
   #include <unistd.h>
   #include <sys/ioctl.h>
+  #include <fcntl.h>
 
   static termios orig_termios;
   static bool termios_initialized = false;
+
+  void initTerminal() {}
+  void restoreTerminal() {}
 
   void initInput() {
       if (termios_initialized) return;
       tcgetattr(STDIN_FILENO, &orig_termios);
       termios raw = orig_termios;
       raw.c_lflag &= ~(ICANON | ECHO);
+      raw.c_cc[VMIN] = 0;
+      raw.c_cc[VTIME] = 0;
       tcsetattr(STDIN_FILENO, TCSANOW, &raw);
       termios_initialized = true;
   }
@@ -62,40 +73,22 @@
   }
   char getChar() {
       char c = 0;
-      read(STDIN_FILENO, &c, 1);
+      if (read(STDIN_FILENO, &c, 1) <= 0) return 0;
       return c;
   }
   void setCursorPos(int X, int Y) {
-      // ANSI: row(Y+1);col(X+1)
-      std::printf("\033[%d;%dH", Y + 1, X + 1);
+      std::cout << "\033[" << (Y + 1) << ";" << (X + 1) << "H";
   }
   void HideCursor() { std::cout << "\033[?25l"; }
   void ShowCursor() { std::cout << "\033[?25h"; }
-  void clearScreen() { system("clear"); }
+  void clearScreen() { std::cout << "\033[2J\033[H"; }
 #endif
 // ===================================================
 
 enum Direction { STOP = 0, LEFT, RIGHT, UP, DOWN };
 
-// Shared atomics
 static std::atomic<bool> playAgain(true);
 static std::atomic<int>  bestScore(0);
-
-// ---------------------------------------------------
-// Board
-// ---------------------------------------------------
-class Board {
-    int width, height;
-public:
-    Board(int w, int h) : width(w), height(h) {}
-    int getWidth()  const { return width; }
-    int getHeight() const { return height; }
-
-    void drawBorderLine() const {
-        for (int i = 0; i < width + 2; ++i) std::cout << "💎";
-        std::cout << "\n";
-    }
-};
 
 // ---------------------------------------------------
 // Food / Bomb
@@ -106,30 +99,31 @@ protected:
 public:
     Food() = default;
     virtual void generate(int width, int height) {
-        x = std::rand() % width;
-        y = std::rand() % height;
+        x = 1 + std::rand() % (width - 2);
+        y = 1 + std::rand() % (height - 2);
     }
     int getX() const { return x; }
     int getY() const { return y; }
-    virtual void draw() const { std::cout << "🍎"; }
+    virtual std::string getIcon() const { return "\033[91m●\033[0m"; } // Red
 };
 
 class Bomb : public Food {
 public:
-    void draw() const override { std::cout << "💣"; }
+    std::string getIcon() const override { return "\033[93m×\033[0m"; } // Yellow
 };
 
 // ---------------------------------------------------
 // Snake
 // ---------------------------------------------------
 class Snake {
+public:
     int x, y;
     int tailX[200], tailY[200];
     int nTail;
     Direction dir;
-public:
-    Snake(int startX, int startY) : x(startX), y(startY), nTail(3), dir(STOP) {
-        // Place 3 segments to the left of head
+    std::string color;
+    
+    Snake(int startX, int startY, std::string col) : x(startX), y(startY), nTail(3), dir(STOP), color(col) {
         for (int i = 0; i < nTail; ++i) {
             tailX[i] = x - (i + 1);
             tailY[i] = y;
@@ -137,18 +131,20 @@ public:
     }
 
     void setDirection(Direction d) {
-        // Disallow 180° instant turns
         if ((dir == LEFT && d == RIGHT) || (dir == RIGHT && d == LEFT) ||
             (dir == UP   && d == DOWN)  || (dir == DOWN  && d == UP))
             return;
+        if (dir == STOP && d == LEFT) return;
         dir = d;
     }
+    
     Direction getDirection() const { return dir; }
-
     int getX() const { return x; }
     int getY() const { return y; }
 
     void move() {
+        if (dir == STOP) return;
+
         int prevX = tailX[0], prevY = tailY[0];
         int prev2X, prev2Y;
 
@@ -176,34 +172,21 @@ public:
         return false;
     }
 
-    bool checkWallCollision(const Board& board) const {
-        return (x < 0 || x >= board.getWidth() || y < 0 || y >= board.getHeight());
+    bool checkWallCollision(int width, int height) const {
+        return (x <= 0 || x >= width - 1 || y <= 0 || y >= height - 1);
     }
 
-    void draw(const Board& board, const Food& fruit, const Bomb& bomb) const {
-        setCursorPos(0, 1);
-        board.drawBorderLine();
-        for (int i = 0; i < board.getHeight(); ++i) {
-            std::cout << "💎";
-            for (int j = 0; j < board.getWidth(); ++j) {
-                if (i == y && j == x) { std::cout << "😶"; }
-                else if (i == fruit.getY() && j == fruit.getX()) { fruit.draw(); }
-                else if (i == bomb.getY() && j == bomb.getX()) { bomb.draw(); }
-                else {
-                    bool printTail = false;
-                    for (int k = 0; k < nTail; ++k) {
-                        if (tailX[k] == j && tailY[k] == i) {
-                            std::cout << "🟡";
-                            printTail = true;
-                            break;
-                        }
-                    }
-                    if (!printTail) std::cout << "  ";
-                }
-            }
-            std::cout << "💎\n";
+    bool isBodyAt(int bx, int by) const {
+        for (int k = 0; k < nTail; ++k) {
+            if (tailX[k] == bx && tailY[k] == by) return true;
         }
-        board.drawBorderLine();
+        return false;
+    }
+
+    bool checkCollisionWith(const Snake& other) const {
+        if (x == other.x && y == other.y) return true;
+        if (other.isBodyAt(x, y)) return true;
+        return false;
     }
 };
 
@@ -211,19 +194,24 @@ public:
 // Game
 // ---------------------------------------------------
 class Game {
-    int boardSize = 20;           // NxN
-    Board board{boardSize, boardSize};
+    int boardWidth = 50;
+    int boardHeight = 25;
 
-    Snake* snake = nullptr;
+    Snake* snake1 = nullptr;
+    Snake* snake2 = nullptr;
     Food*  fruit = nullptr;
     Bomb*  bomb  = nullptr;
 
+    std::string prevBuffer[30][60];
+    bool forceRedraw = true;
+
     std::string playerName;
-    int  score = 0;
-    int  delayTime = 120;
+    int  score1 = 0;
+    int  score2 = 0;
+    int  delayTime = 100;
     bool gameRunning = false;
-    bool bombHit = false;
     bool firstTime = true;
+    int loser = 0;
 
 public:
     Game() {
@@ -234,137 +222,255 @@ public:
     ~Game() { delete fruit; delete bomb; }
 
     void setup() {
-        score = 0;
-        bombHit = false;
+        score1 = 0;
+        score2 = 0;
+        loser = 0;
         gameRunning = true;
+        forceRedraw = true;
 
-        delete snake;
-        snake = new Snake(boardSize / 2, boardSize / 2);
+        delete snake1;
+        delete snake2;
+        snake1 = new Snake(boardWidth / 3, boardHeight / 2, "\033[92m█\033[0m"); // Green
+        snake2 = new Snake(2 * boardWidth / 3, boardHeight / 2, "\033[94m█\033[0m"); // Blue
 
-        fruit->generate(boardSize, boardSize);
-        bomb->generate(boardSize, boardSize);
-
-        HideCursor();
+        fruit->generate(boardWidth, boardHeight);
+        bomb->generate(boardWidth, boardHeight);
+        
+        clearScreen();
     }
 
     void showIntro() {
         clearScreen();
-#ifdef _WIN32
-        SetConsoleOutputCP(CP_UTF8);
-#endif
         if (firstTime) {
-            std::cout << "\n💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎\n";
+            std::cout << "\n============================================\n";
             std::cout << "          WELCOME TO SNAKE QUEST \n";
-            std::cout << "💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎💎\n\n";
-            std::cout << "👤 Enter your name: ";
+            std::cout << "============================================\n\n";
+            std::cout << "Enter your name: ";
             std::cin  >> playerName;
+            std::cin.ignore(10000, '\n');
             firstTime = false;
         } else {
             std::cout << "\n Welcome back, " << playerName << "! Ready for another round?\n";
         }
 
-        chooseLevel();
-        std::cout << "\n🚀 Setting up your arena...\n";
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    }
-
-    void chooseLevel() {
         std::cout << "\n Choose difficulty:\n";
         std::cout << "   1 Easy   (Relaxed)\n";
         std::cout << "   2 Medium (Classic)\n";
         std::cout << "   3 Hard   (Blink and Die)\n";
         std::cout << " Enter choice: ";
+        
+        std::string choiceStr;
+        std::getline(std::cin, choiceStr);
         int choice = 2;
-        std::cin >> choice;
+        try { choice = std::stoi(choiceStr); } catch(...) {}
 
-        if (choice == 1)      delayTime = 180;
-        else if (choice == 2) delayTime = 120;
-        else if (choice == 3) delayTime = 70;
-        else                  delayTime = 120;
+        if (choice == 1)      delayTime = 120;
+        else if (choice == 2) delayTime = 80;
+        else if (choice == 3) delayTime = 50;
+        else                  delayTime = 80;
+
+        std::cout << "\n🚀 Setting up your arena...\n";
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+    }
+
+    void drawFrame() {
+        std::string nextBuffer[30][60];
+        
+        for(int y = 0; y < boardHeight; ++y) {
+            for(int x = 0; x < boardWidth; ++x) {
+                if (y == 0 || y == boardHeight - 1 || x == 0 || x == boardWidth - 1) {
+                    nextBuffer[y][x] = "\033[96m█\033[0m"; // Cyan border
+                } else {
+                    nextBuffer[y][x] = " ";
+                }
+            }
+        }
+        
+        // Draw items
+        nextBuffer[fruit->getY()][fruit->getX()] = fruit->getIcon();
+        nextBuffer[bomb->getY()][bomb->getX()] = bomb->getIcon();
+        
+        // Draw snake 2
+        for(int i=0; i<snake2->nTail; ++i) {
+            if (snake2->tailY[i] > 0 && snake2->tailY[i] < boardHeight - 1 && snake2->tailX[i] > 0 && snake2->tailX[i] < boardWidth - 1)
+                nextBuffer[snake2->tailY[i]][snake2->tailX[i]] = snake2->color;
+        }
+        if (snake2->getY() > 0 && snake2->getY() < boardHeight - 1 && snake2->getX() > 0 && snake2->getX() < boardWidth - 1)
+            nextBuffer[snake2->getY()][snake2->getX()] = snake2->color;
+            
+        // Draw snake 1
+        for(int i=0; i<snake1->nTail; ++i) {
+            if (snake1->tailY[i] > 0 && snake1->tailY[i] < boardHeight - 1 && snake1->tailX[i] > 0 && snake1->tailX[i] < boardWidth - 1)
+                nextBuffer[snake1->tailY[i]][snake1->tailX[i]] = snake1->color;
+        }
+        if (snake1->getY() > 0 && snake1->getY() < boardHeight - 1 && snake1->getX() > 0 && snake1->getX() < boardWidth - 1)
+            nextBuffer[snake1->getY()][snake1->getX()] = snake1->color;
+
+        // Render differences
+        std::stringstream ss;
+        for(int y = 0; y < boardHeight; ++y) {
+            for(int x = 0; x < boardWidth; ++x) {
+                if (forceRedraw || nextBuffer[y][x] != prevBuffer[y][x]) {
+                    ss << "\033[" << (y + 2) << ";" << (x + 1) << "H" << nextBuffer[y][x];
+                    prevBuffer[y][x] = nextBuffer[y][x];
+                }
+            }
+        }
+        std::cout << ss.str() << std::flush;
+        forceRedraw = false;
     }
 
     void updateScoreUI() {
         setCursorPos(0, 0);
-        // ✅ EXACT original spacing (Option A)
-        std::cout << "🎮 Player: " << playerName
-                  << "    ⭐ Score: " << score
-                  << "    🏆 High Score: " << bestScore.load() << "     ";
+        std::cout << "\033[92mP1 Score: " << score1 
+                  << "\033[0m     \033[94mP2 Score: " << score2
+                  << "\033[0m     \033[93mHigh Score: " << bestScore.load() 
+                  << "\033[0m                   "; // Pad with spaces
     }
 
     void input() {
-        if (kbhitCheck()) {
+        while (kbhitCheck()) {
             char c = getChar();
+            if (c <= 0) continue;
+            
+            // Handle Arrow Keys for Player 1
+            if (c == '\033') {
+                char bracket = getChar();
+                if (bracket == '[') {
+                    char arr = getChar();
+                    if (arr == 'A') snake1->setDirection(UP);
+                    else if (arr == 'B') snake1->setDirection(DOWN);
+                    else if (arr == 'C') snake1->setDirection(RIGHT);
+                    else if (arr == 'D') snake1->setDirection(LEFT);
+                }
+                continue;
+            } else if (c == -32 || c == 224) { // Windows arrows
+                char arr = getChar();
+                if (arr == 72) snake1->setDirection(UP);
+                else if (arr == 80) snake1->setDirection(DOWN);
+                else if (arr == 77) snake1->setDirection(RIGHT);
+                else if (arr == 75) snake1->setDirection(LEFT);
+                continue;
+            }
+
             switch (c) {
-                case 'a': case 'A': snake->setDirection(LEFT);  break;
-                case 'd': case 'D': snake->setDirection(RIGHT); break;
-                case 'w': case 'W': snake->setDirection(UP);    break;
-                case 's': case 'S': snake->setDirection(DOWN);  break;
+                // Player 2 controls (WASD)
+                case 'a': case 'A': snake2->setDirection(LEFT);  break;
+                case 'd': case 'D': snake2->setDirection(RIGHT); break;
+                case 'w': case 'W': snake2->setDirection(UP);    break;
+                case 's': case 'S': snake2->setDirection(DOWN);  break;
+                
                 case 'x': case 'X': gameRunning = false;        break;
             }
         }
     }
 
     void logic() {
-        snake->move();
+        snake1->move();
+        snake2->move();
 
-        // Prevent instant self-collision while STOP
-        if (snake->getDirection() != STOP && snake->checkSelfCollision())
-            gameRunning = false;
+        bool s1_dies = false;
+        bool s2_dies = false;
 
-        if (snake->checkWallCollision(board))
+        if (snake1->getDirection() != STOP && snake1->checkSelfCollision()) s1_dies = true;
+        if (snake2->getDirection() != STOP && snake2->checkSelfCollision()) s2_dies = true;
+
+        if (snake1->checkWallCollision(boardWidth, boardHeight)) s1_dies = true;
+        if (snake2->checkWallCollision(boardWidth, boardHeight)) s2_dies = true;
+
+        if (snake1->checkCollisionWith(*snake2)) s1_dies = true;
+        if (snake2->checkCollisionWith(*snake1)) s2_dies = true;
+        
+        if (s1_dies || s2_dies) {
             gameRunning = false;
+            if (s1_dies && s2_dies) loser = 3; // both
+            else if (s1_dies) loser = 1;
+            else loser = 2;
+        }
 
         // Eat fruit
-        if (snake->getX() == fruit->getX() && snake->getY() == fruit->getY()) {
-            score += 10;
-            if (score > bestScore) bestScore = score;
-            snake->grow();
-            fruit->generate(boardSize, boardSize);
-            bomb->generate(boardSize, boardSize);
+        bool eaten = false;
+        if (snake1->getX() == fruit->getX() && snake1->getY() == fruit->getY()) {
+            score1 += 10;
+            if (score1 > bestScore) bestScore = score1;
+            snake1->grow();
+            eaten = true;
+        } else if (snake2->getX() == fruit->getX() && snake2->getY() == fruit->getY()) {
+            score2 += 10;
+            if (score2 > bestScore) bestScore = score2;
+            snake2->grow();
+            eaten = true;
+        }
+        if (eaten) {
+            fruit->generate(boardWidth, boardHeight);
+            bomb->generate(boardWidth, boardHeight);
         }
 
         // Hit bomb
-        if (snake->getX() == bomb->getX() && snake->getY() == bomb->getY()) {
-            bombHit = true;
+        if (snake1->getX() == bomb->getX() && snake1->getY() == bomb->getY()) {
             gameRunning = false;
+            loser = 1;
+        } else if (snake2->getX() == bomb->getX() && snake2->getY() == bomb->getY()) {
+            gameRunning = false;
+            loser = 2;
         }
     }
 
     void gameOverMessage() {
         clearScreen();
-        if (bombHit) {
-            std::cout << "\n💣💥  Uh oh! You just hugged a bomb, " << playerName << "! 😅\n";
-            std::cout << "Next time, maybe avoid the explosive stuff, okay? 😂\n\n";
+        
+        std::vector<std::string> lines;
+        lines.push_back("========================================");
+        lines.push_back("               GAME OVER                ");
+        lines.push_back("========================================");
+        
+        if (loser == 1) {
+            lines.push_back("             Player 1 Lost              ");
+        } else if (loser == 2) {
+            lines.push_back("             Player 2 Lost              ");
         } else {
-            std::cout << "\n💀 Oops! " << playerName << ", your snake crashed. \n";
-            std::cout << "That’s what we call a fatal bite! 😆\n\n";
+            lines.push_back("                 Draw                   ");
         }
-        std::cout << "🎯 Final Score: " << score << "\n";
-        std::cout << "🏆 High Score: " << bestScore.load() << "\n\n";
+        
+        lines.push_back("");
+        lines.push_back("          P1 Score: " + std::to_string(score1));
+        lines.push_back("          P2 Score: " + std::to_string(score2));
+        lines.push_back("          High Score: " + std::to_string(bestScore.load()));
+        lines.push_back("");
+        
+        int startY = boardHeight / 2 - 5;
+        for (size_t i = 0; i < lines.size(); ++i) {
+            setCursorPos(5, startY + i);
+            std::cout << lines[i];
+        }
+        std::cout << "\n\n";
     }
 
     void play() {
         setup();
+        HideCursor();
+        initInput();
+        
         while (gameRunning) {
             updateScoreUI();
-            snake->draw(board, *fruit, *bomb);
+            drawFrame();
             input();
             logic();
             std::this_thread::sleep_for(std::chrono::milliseconds(delayTime));
         }
-        delete snake; snake = nullptr;
+        
+        resetInput();
+        ShowCursor();
+        
+        delete snake1; snake1 = nullptr;
+        delete snake2; snake2 = nullptr;
+        
         gameOverMessage();
     }
 };
 
 int main() {
-#ifndef _WIN32
-    initInput();
-#endif
-
-#ifdef _WIN32
-    SetConsoleOutputCP(CP_UTF8);
-#endif
+    initTerminal();
 
     Game game;
     std::string choice;
@@ -372,17 +478,15 @@ int main() {
         game.showIntro();
         game.play();
 
-        std::cout << "🔁 Play again? (y/n): ";
-        std::cin >> choice;
-        if (choice != "y" && choice != "Y") {
+        std::cout << "       Play again? (y/n): ";
+        std::getline(std::cin, choice);
+        if (choice.empty() || (choice[0] != 'y' && choice[0] != 'Y')) {
             playAgain = false;
-            std::cout << "\n✨ Thanks for playing Snake Quest! 💎\n";
+            std::cout << "\n       Thanks for playing!\n";
         }
     }
 
-#ifndef _WIN32
-    resetInput();
-#endif
-    ShowCursor();
+    std::cout << "\033[0m\n"; // clear ANSI state
+    restoreTerminal();
     return 0;
 }
