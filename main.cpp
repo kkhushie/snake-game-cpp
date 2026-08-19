@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <string>
 #include <atomic>
+#include <vector>
 
 // ===================================================
 // Platform specifics
@@ -214,7 +215,8 @@ class Game {
     int boardSize = 20;           // NxN
     Board board{boardSize, boardSize};
 
-    Snake* snake = nullptr;
+    int numSnakes = 1;
+    std::vector<Snake*> snakes;
     Food*  fruit = nullptr;
     Bomb*  bomb  = nullptr;
 
@@ -231,15 +233,22 @@ public:
         fruit = new Food();
         bomb  = new Bomb();
     }
-    ~Game() { delete fruit; delete bomb; }
+    ~Game() { 
+        for (auto s : snakes) delete s;
+        delete fruit; 
+        delete bomb; 
+    }
 
     void setup() {
         score = 0;
         bombHit = false;
         gameRunning = true;
 
-        delete snake;
-        snake = new Snake(boardSize / 2, boardSize / 2);
+        for (auto s : snakes) delete s;
+        snakes.clear();
+        for (int i = 0; i < numSnakes; ++i) {
+            snakes.push_back(new Snake(boardSize / 2, boardSize / 2));
+        }
 
         fruit->generate(boardSize, boardSize);
         bomb->generate(boardSize, boardSize);
@@ -295,38 +304,40 @@ public:
         if (kbhitCheck()) {
             char c = getChar();
             switch (c) {
-                case 'a': case 'A': snake->setDirection(LEFT);  break;
-                case 'd': case 'D': snake->setDirection(RIGHT); break;
-                case 'w': case 'W': snake->setDirection(UP);    break;
-                case 's': case 'S': snake->setDirection(DOWN);  break;
+                case 'a': case 'A': if (!snakes.empty()) snakes[0]->setDirection(LEFT);  break;
+                case 'd': case 'D': if (!snakes.empty()) snakes[0]->setDirection(RIGHT); break;
+                case 'w': case 'W': if (!snakes.empty()) snakes[0]->setDirection(UP);    break;
+                case 's': case 'S': if (!snakes.empty()) snakes[0]->setDirection(DOWN);  break;
                 case 'x': case 'X': gameRunning = false;        break;
             }
         }
     }
 
     void logic() {
-        snake->move();
+        for (auto s : snakes) {
+            s->move();
 
-        // Prevent instant self-collision while STOP
-        if (snake->getDirection() != STOP && snake->checkSelfCollision())
-            gameRunning = false;
+            // Prevent instant self-collision while STOP
+            if (s->getDirection() != STOP && s->checkSelfCollision())
+                gameRunning = false;
 
-        if (snake->checkWallCollision(board))
-            gameRunning = false;
+            if (s->checkWallCollision(board))
+                gameRunning = false;
 
-        // Eat fruit
-        if (snake->getX() == fruit->getX() && snake->getY() == fruit->getY()) {
-            score += 10;
-            if (score > bestScore) bestScore = score;
-            snake->grow();
-            fruit->generate(boardSize, boardSize);
-            bomb->generate(boardSize, boardSize);
-        }
+            // Eat fruit
+            if (s->getX() == fruit->getX() && s->getY() == fruit->getY()) {
+                score += 10;
+                if (score > bestScore) bestScore = score;
+                s->grow();
+                fruit->generate(boardSize, boardSize);
+                bomb->generate(boardSize, boardSize);
+            }
 
-        // Hit bomb
-        if (snake->getX() == bomb->getX() && snake->getY() == bomb->getY()) {
-            bombHit = true;
-            gameRunning = false;
+            // Hit bomb
+            if (s->getX() == bomb->getX() && s->getY() == bomb->getY()) {
+                bombHit = true;
+                gameRunning = false;
+            }
         }
     }
 
@@ -347,12 +358,13 @@ public:
         setup();
         while (gameRunning) {
             updateScoreUI();
-            snake->draw(board, *fruit, *bomb);
+            if (!snakes.empty()) snakes[0]->draw(board, *fruit, *bomb);
             input();
             logic();
             std::this_thread::sleep_for(std::chrono::milliseconds(delayTime));
         }
-        delete snake; snake = nullptr;
+        for (auto s : snakes) delete s;
+        snakes.clear();
         gameOverMessage();
     }
 };
