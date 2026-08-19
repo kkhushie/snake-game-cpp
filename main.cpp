@@ -172,39 +172,22 @@ public:
     void grow() { if (nTail < 200) ++nTail; }
 
     bool checkSelfCollision() const {
+        return checkTailCollision(x, y);
+    }
+
+    bool checkTailCollision(int tx, int ty) const {
         for (int i = 0; i < nTail; ++i)
-            if (tailX[i] == x && tailY[i] == y) return true;
+            if (tailX[i] == tx && tailY[i] == ty) return true;
         return false;
+    }
+
+    bool checkPointCollision(int tx, int ty) const {
+        if (x == tx && y == ty) return true;
+        return checkTailCollision(tx, ty);
     }
 
     bool checkWallCollision(const Board& board) const {
         return (x < 0 || x >= board.getWidth() || y < 0 || y >= board.getHeight());
-    }
-
-    void draw(const Board& board, const Food& fruit, const Bomb& bomb) const {
-        setCursorPos(0, 1);
-        board.drawBorderLine();
-        for (int i = 0; i < board.getHeight(); ++i) {
-            std::cout << "💎";
-            for (int j = 0; j < board.getWidth(); ++j) {
-                if (i == y && j == x) { std::cout << "😶"; }
-                else if (i == fruit.getY() && j == fruit.getX()) { fruit.draw(); }
-                else if (i == bomb.getY() && j == bomb.getX()) { bomb.draw(); }
-                else {
-                    bool printTail = false;
-                    for (int k = 0; k < nTail; ++k) {
-                        if (tailX[k] == j && tailY[k] == i) {
-                            std::cout << "🟡";
-                            printTail = true;
-                            break;
-                        }
-                    }
-                    if (!printTail) std::cout << "  ";
-                }
-            }
-            std::cout << "💎\n";
-        }
-        board.drawBorderLine();
     }
 };
 
@@ -215,13 +198,13 @@ class Game {
     int boardSize = 20;           // NxN
     Board board{boardSize, boardSize};
 
-    int numSnakes = 1;
+    int numSnakes = 2;
     std::vector<Snake*> snakes;
+    std::vector<int> scores;
     Food*  fruit = nullptr;
     Bomb*  bomb  = nullptr;
 
     std::string playerName;
-    int  score = 0;
     int  delayTime = 120;
     bool gameRunning = false;
     bool bombHit = false;
@@ -240,14 +223,14 @@ public:
     }
 
     void setup() {
-        score = 0;
         bombHit = false;
         gameRunning = true;
 
         for (auto s : snakes) delete s;
         snakes.clear();
+        scores.assign(numSnakes, 0);
         for (int i = 0; i < numSnakes; ++i) {
-            snakes.push_back(new Snake(boardSize / 2, boardSize / 2));
+            snakes.push_back(new Snake(boardSize / 2, boardSize / 2 + (i * 2)));
         }
 
         fruit->generate(boardSize, boardSize);
@@ -294,27 +277,59 @@ public:
 
     void updateScoreUI() {
         setCursorPos(0, 0);
-        // ✅ EXACT original spacing (Option A)
-        std::cout << "🎮 Player: " << playerName
-                  << "    ⭐ Score: " << score
-                  << "    🏆 High Score: " << bestScore.load() << "     ";
+        std::cout << "🎮 P1: " << (scores.size() > 0 ? scores[0] : 0)
+                  << "  🎮 P2: " << (scores.size() > 1 ? scores[1] : 0)
+                  << "    🏆 High: " << bestScore.load() << "     ";
+    }
+
+    void draw() const {
+        setCursorPos(0, 1);
+        board.drawBorderLine();
+        for (int i = 0; i < board.getHeight(); ++i) {
+            std::cout << "💎";
+            for (int j = 0; j < board.getWidth(); ++j) {
+                bool drawn = false;
+                for (auto s : snakes) {
+                    if (s->getX() == j && s->getY() == i) { std::cout << "😶"; drawn = true; break; }
+                }
+                if (drawn) continue;
+
+                if (i == fruit->getY() && j == fruit->getX()) { fruit->draw(); drawn = true; }
+                else if (i == bomb->getY() && j == bomb->getX()) { bomb->draw(); drawn = true; }
+                if (drawn) continue;
+
+                for (auto s : snakes) {
+                    if (s->checkTailCollision(j, i)) { std::cout << "🟡"; drawn = true; break; }
+                }
+                if (!drawn) std::cout << "  ";
+            }
+            std::cout << "💎\n";
+        }
+        board.drawBorderLine();
     }
 
     void input() {
         if (kbhitCheck()) {
             char c = getChar();
             switch (c) {
-                case 'a': case 'A': if (!snakes.empty()) snakes[0]->setDirection(LEFT);  break;
-                case 'd': case 'D': if (!snakes.empty()) snakes[0]->setDirection(RIGHT); break;
                 case 'w': case 'W': if (!snakes.empty()) snakes[0]->setDirection(UP);    break;
                 case 's': case 'S': if (!snakes.empty()) snakes[0]->setDirection(DOWN);  break;
+                case 'a': case 'A': if (!snakes.empty()) snakes[0]->setDirection(LEFT);  break;
+                case 'd': case 'D': if (!snakes.empty()) snakes[0]->setDirection(RIGHT); break;
+                
+                case 'i': case 'I': if (snakes.size() > 1) snakes[1]->setDirection(UP);    break;
+                case 'k': case 'K': if (snakes.size() > 1) snakes[1]->setDirection(DOWN);  break;
+                case 'j': case 'J': if (snakes.size() > 1) snakes[1]->setDirection(LEFT);  break;
+                case 'l': case 'L': if (snakes.size() > 1) snakes[1]->setDirection(RIGHT); break;
+
                 case 'x': case 'X': gameRunning = false;        break;
             }
         }
     }
 
     void logic() {
-        for (auto s : snakes) {
+        for (size_t i = 0; i < snakes.size(); ++i) {
+            auto s = snakes[i];
             s->move();
 
             // Prevent instant self-collision while STOP
@@ -324,10 +339,17 @@ public:
             if (s->checkWallCollision(board))
                 gameRunning = false;
 
+            // Collision with other snakes
+            for (size_t j = 0; j < snakes.size(); ++j) {
+                if (i != j && snakes[j]->checkPointCollision(s->getX(), s->getY())) {
+                    gameRunning = false;
+                }
+            }
+
             // Eat fruit
             if (s->getX() == fruit->getX() && s->getY() == fruit->getY()) {
-                score += 10;
-                if (score > bestScore) bestScore = score;
+                scores[i] += 10;
+                if (scores[i] > bestScore) bestScore = scores[i];
                 s->grow();
                 fruit->generate(boardSize, boardSize);
                 bomb->generate(boardSize, boardSize);
@@ -350,7 +372,8 @@ public:
             std::cout << "\n💀 Oops! " << playerName << ", your snake crashed. \n";
             std::cout << "That’s what we call a fatal bite! 😆\n\n";
         }
-        std::cout << "🎯 Final Score: " << score << "\n";
+        std::cout << "🎯 Final Scores - P1: " << (scores.size() > 0 ? scores[0] : 0)
+                  << "  P2: " << (scores.size() > 1 ? scores[1] : 0) << "\n";
         std::cout << "🏆 High Score: " << bestScore.load() << "\n\n";
     }
 
@@ -358,7 +381,7 @@ public:
         setup();
         while (gameRunning) {
             updateScoreUI();
-            if (!snakes.empty()) snakes[0]->draw(board, *fruit, *bomb);
+            draw();
             input();
             logic();
             std::this_thread::sleep_for(std::chrono::milliseconds(delayTime));
