@@ -208,6 +208,21 @@ public:
 };
 
 // ---------------------------------------------------
+// ScorePolicy — object seam for testability (Part D, Lab 4)
+// ---------------------------------------------------
+struct ScorePolicy {
+    virtual void onFruitEaten(int& score, int& bestScore) = 0;
+    virtual ~ScorePolicy() = default;
+};
+
+struct DefaultScorePolicy : ScorePolicy {
+    void onFruitEaten(int& score, int& bestScore) override {
+        score += 10;
+        if (score > bestScore) bestScore = score;
+    }
+};
+
+// ---------------------------------------------------
 // Game
 // ---------------------------------------------------
 class Game {
@@ -224,14 +239,16 @@ class Game {
     bool gameRunning = false;
     bool bombHit = false;
     bool firstTime = true;
+    ScorePolicy* scorePolicy = nullptr;
 
 public:
-    Game() {
+    explicit Game(ScorePolicy* policy = nullptr) {
         std::srand(static_cast<unsigned>(time(nullptr)));
         fruit = new Food();
         bomb  = new Bomb();
+        scorePolicy = (policy != nullptr) ? policy : new DefaultScorePolicy();
     }
-    ~Game() { delete fruit; delete bomb; }
+    ~Game() { delete fruit; delete bomb; delete scorePolicy; }
 
     void setup() {
         score = 0;
@@ -316,8 +333,7 @@ public:
 
         // Eat fruit
         if (snake->getX() == fruit->getX() && snake->getY() == fruit->getY()) {
-            score += 10;
-            if (score > bestScore) bestScore = score;
+            scorePolicy->onFruitEaten(score, bestScore);
             snake->grow();
             fruit->generate(boardSize, boardSize);
             bomb->generate(boardSize, boardSize);
